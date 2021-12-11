@@ -21,6 +21,7 @@
  * questions.
  */
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -96,9 +97,15 @@ public class TransferTo {
             // optimized case
             { fileChannelInput(), selectableChannelOutput() },
 
-            // tests FileChannel.transferTo(WritableChannelOutput)
+            // tests FileChannel.transferTo(WritableByteChannelOutput)
             // optimized case
             { fileChannelInput(), writableByteChannelOutput() },
+
+            // tests FileChannel.transferFrom(SelectableChannelOutput) optimized case
+            { selectableChannelInput(), fileChannelOutput() },
+
+            // tests FileChannel.transferFrom(ReadableByteChannelInput) optimized case
+            { readableByteChannelInput(), fileChannelOutput() },
 
             // tests InputStream.transferTo(OutputStream) default case
             { readableByteChannelInput(), defaultOutput() }
@@ -156,23 +163,23 @@ public class TransferTo {
     }
 
     /*
-     * Special test for file-to-file transfer of more than 2 GB. This test
-     * covers multiple iterations of FileChannel.transerTo(FileChannel),
+     * Special test for file-to-stream transfer of more than 2 GB. This test
+     * covers multiple iterations of FileChannel.transferTo(WritableByteChannel),
      * which ChannelInputStream.transferTo() only applies in this particular
      * case, and cannot get tested using a single byte[] due to size limitation
      * of arrays.
      */
     @Test
-    public void testMoreThanTwoGB() throws IOException {
+    public void testMoreThanTwoGBtoStream() throws IOException {
         // prepare two temporary files to be compared at the end of the test
         // set the source file name
-        String sourceName = String.format("test3GBSource%s.tmp",
+        String sourceName = String.format("test3GBtoStreamSource%s.tmp",
             String.valueOf(RND.nextInt(Integer.MAX_VALUE)));
         Path sourceFile = CWD.resolve(sourceName);
 
         try {
             // set the target file name
-            String targetName = String.format("test3GBTarget%s.tmp",
+            String targetName = String.format("test3GBtoStreamTarget%s.tmp",
                 String.valueOf(RND.nextInt(Integer.MAX_VALUE)));
             Path targetFile = CWD.resolve(targetName);
 
@@ -199,7 +206,7 @@ public class TransferTo {
                 }
 
                 // perform actual transfer, effectively by multiple invocations
-                // of Filechannel.transferTo(FileChannel)
+                // of FileChannel.transferTo(WritableByteChannel)
                 try (InputStream inputStream = Channels.newInputStream(FileChannel.open(sourceFile));
                      OutputStream outputStream = Channels.newOutputStream(FileChannel.open(targetFile, WRITE))) {
                     long count = inputStream.transferTo(outputStream);
@@ -221,8 +228,73 @@ public class TransferTo {
     }
 
     /*
-     * Special test of whether selectable channel based transfer throws blocking
-     * mode exception.
+     * Special test for stream-to-file transfer of more than 2 GB. This test
+     * covers multiple iterations of FileChannel.transferFrom(ReadableByteChannel),
+     * which ChannelInputStream.transferFrom() only applies in this particular
+     * case, and cannot get tested using a single byte[] due to size limitation
+     * of arrays.
+     */
+    @Test
+    public void testMoreThanTwoGBfromStream() throws IOException {
+        // prepare two temporary files to be compared at the end of the test
+        // set the source file name
+        String sourceName = String.format("test3GBfromStreamSource%s.tmp",
+            String.valueOf(RND.nextInt(Integer.MAX_VALUE)));
+        Path sourceFile = CWD.resolve(sourceName);
+
+        try {
+            // set the target file name
+            String targetName = String.format("test3GBfromStreamTarget%s.tmp",
+                String.valueOf(RND.nextInt(Integer.MAX_VALUE)));
+            Path targetFile = CWD.resolve(targetName);
+
+            try {
+                // calculate initial position to be just short of 2GB
+                final long initPos = 2047*BYTES_PER_WRITE;
+
+                // create the source file with a hint to be sparse
+                try (FileChannel fc = FileChannel.open(sourceFile, CREATE_NEW, SPARSE, WRITE, APPEND);) {
+                    // set initial position to avoid writing nearly 2GB
+                    fc.position(initPos);
+
+                    // fill the remainder of the file with random bytes
+                    int nw = (int)(NUM_WRITES - initPos/BYTES_PER_WRITE);
+                    for (int i = 0; i < nw; i++) {
+                        byte[] rndBytes = createRandomBytes(BYTES_PER_WRITE, 0);
+                        ByteBuffer src = ByteBuffer.wrap(rndBytes);
+                        fc.write(src);
+                    }
+                }
+
+                // create the target file with a hint to be sparse
+                try (FileChannel fc = FileChannel.open(targetFile, CREATE_NEW, WRITE, SPARSE);) {
+                }
+
+                // performing actual transfer, effectively by multiple invocations of
+                // FileChannel.transferFrom(ReadableByteChannel)
+                try (InputStream inputStream = Channels.newInputStream(Channels.newChannel(
+                        new BufferedInputStream(Files.newInputStream(sourceFile))));
+                     OutputStream outputStream = Channels.newOutputStream(FileChannel.open(targetFile, WRITE))) {
+                    long count = inputStream.transferTo(outputStream);
+
+                    // compare reported transferred bytes, must be 3 GB
+                    // less the value of the initial position
+                    assertEquals(count, BYTES_WRITTEN - initPos);
+                }
+
+                // compare content of both files, failing if different
+                assertEquals(Files.mismatch(sourceFile, targetFile), -1);
+
+            } finally {
+                 Files.delete(targetFile);
+            }
+        } finally {
+            Files.delete(sourceFile);
+        }
+    }
+
+    /*
+     * Special test whether selectable channel based transfer throws blocking mode exception.
      */
     @Test
     public void testIllegalBlockingMode() throws IOException {
@@ -352,6 +424,25 @@ public class TransferTo {
     }
 
     /*
+     * Creates a provider for an input stream which wraps a selectable channel
+     */
+    private static InputStreamProvider selectableChannelInput() throws IOException {
+        return new InputStreamProvider() {
+            public InputStream input(byte... bytes) throws Exception {
+                Pipe pipe = Pipe.open();
+                new Thread(() -> {
+                    try (OutputStream os = Channels.newOutputStream(pipe.sink())) {
+                      os.write(bytes);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }).start();
+                return Channels.newInputStream(pipe.source());
+            }
+        };
+    }
+
+    /*
      * Creates a provider for an output stream which wraps a file channel
      */
     private static OutputStreamProvider fileChannelOutput() {
@@ -371,6 +462,9 @@ public class TransferTo {
         };
     }
 
+    /*
+     * Creates a provider for an output stream which wraps a selectable channel
+     */
     private static OutputStreamProvider selectableChannelOutput() throws IOException {
         return new OutputStreamProvider() {
             public OutputStream output(Consumer<Supplier<byte[]>> spy) throws Exception {
@@ -397,6 +491,9 @@ public class TransferTo {
         };
     }
 
+    /*
+     * Creates a provider for an output stream which wraps a writable byte channel but is not a file channel
+     */
     private static OutputStreamProvider writableByteChannelOutput() {
         return new OutputStreamProvider() {
             public OutputStream output(Consumer<Supplier<byte[]>> spy) throws Exception {
