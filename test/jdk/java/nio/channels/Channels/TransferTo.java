@@ -27,7 +27,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
@@ -164,7 +163,12 @@ public class TransferTo {
         checkTransferredContents(inputStreamProvider, outputStreamProvider, createRandomBytes(4096, 0), 0, 4096);
     }
 
-    private static void testMoreThanTwoGB(String testName, Function<Path, ReadableByteChannel> factory) throws IOException {
+    @FunctionalInterface
+    private interface CheckedFunction<T, R, E extends Throwable> {
+        R apply(T t) throws E;
+    }
+
+    private static void testMoreThanTwoGB(String testName, CheckedFunction<Path, ReadableByteChannel, IOException> factory) throws IOException {
         // prepare two temporary files to be compared at the end of the test
         // set the source file name
         String sourceName = String.format("test3GB%sSource%s.tmp", testName,
@@ -230,13 +234,7 @@ public class TransferTo {
      */
     @Test
     public void testMoreThanTwoGBtoStream() throws IOException {
-        testMoreThanTwoGB("toStream", sourceFile -> {
-            try {    
-                return FileChannel.open(sourceFile);
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-        });
+        testMoreThanTwoGB("toStream", FileChannel::open);
     }
 
     /*
@@ -248,13 +246,8 @@ public class TransferTo {
      */
     @Test
     public void testMoreThanTwoGBfromStream() throws IOException {
-        testMoreThanTwoGB("fromStream", sourceFile -> {
-            try {
-                return Channels.newChannel(new BufferedInputStream(Files.newInputStream(sourceFile)));
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-        });
+        testMoreThanTwoGB("fromStream", sourceFile -> Channels.newChannel(
+                new BufferedInputStream(Files.newInputStream(sourceFile))));
     }
 
     /*
