@@ -27,6 +27,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
@@ -45,6 +46,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.testng.annotations.DataProvider;
@@ -162,24 +164,16 @@ public class TransferTo {
         checkTransferredContents(inputStreamProvider, outputStreamProvider, createRandomBytes(4096, 0), 0, 4096);
     }
 
-    /*
-     * Special test for file-to-stream transfer of more than 2 GB. This test
-     * covers multiple iterations of FileChannel.transferTo(WritableByteChannel),
-     * which ChannelInputStream.transferTo() only applies in this particular
-     * case, and cannot get tested using a single byte[] due to size limitation
-     * of arrays.
-     */
-    @Test
-    public void testMoreThanTwoGBtoStream() throws IOException {
+    private static void testMoreThanTwoGB(String testName, Function<Path, ReadableByteChannel> factory) throws IOException {
         // prepare two temporary files to be compared at the end of the test
         // set the source file name
-        String sourceName = String.format("test3GBtoStreamSource%s.tmp",
+        String sourceName = String.format("test3GB%sSource%s.tmp", testName,
             String.valueOf(RND.nextInt(Integer.MAX_VALUE)));
         Path sourceFile = CWD.resolve(sourceName);
 
         try {
             // set the target file name
-            String targetName = String.format("test3GBtoStreamTarget%s.tmp",
+            String targetName = String.format("test3GB%sTarget%s.tmp", testName,
                 String.valueOf(RND.nextInt(Integer.MAX_VALUE)));
             Path targetFile = CWD.resolve(targetName);
 
@@ -206,8 +200,8 @@ public class TransferTo {
                 }
 
                 // perform actual transfer, effectively by multiple invocations
-                // of FileChannel.transferTo(WritableByteChannel)
-                try (InputStream inputStream = Channels.newInputStream(FileChannel.open(sourceFile));
+                // of FileChannel.transferTo(WritableByteChannel) or FileChannel.transferFrom(ReadableByteChannel)
+                try (InputStream inputStream = Channels.newInputStream(factory.apply(sourceFile));
                      OutputStream outputStream = Channels.newOutputStream(FileChannel.open(targetFile, WRITE))) {
                     long count = inputStream.transferTo(outputStream);
 
@@ -228,6 +222,24 @@ public class TransferTo {
     }
 
     /*
+     * Special test for file-to-stream transfer of more than 2 GB. This test
+     * covers multiple iterations of FileChannel.transferTo(WritableByteChannel),
+     * which ChannelInputStream.transferTo() only applies in this particular
+     * case, and cannot get tested using a single byte[] due to size limitation
+     * of arrays.
+     */
+    @Test
+    public void testMoreThanTwoGBtoStream() throws IOException {
+        testMoreThanTwoGB("toStream", sourceFile -> {
+            try {    
+                return FileChannel.open(sourceFile);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+    }
+
+    /*
      * Special test for stream-to-file transfer of more than 2 GB. This test
      * covers multiple iterations of FileChannel.transferFrom(ReadableByteChannel),
      * which ChannelInputStream.transferFrom() only applies in this particular
@@ -236,61 +248,13 @@ public class TransferTo {
      */
     @Test
     public void testMoreThanTwoGBfromStream() throws IOException {
-        // prepare two temporary files to be compared at the end of the test
-        // set the source file name
-        String sourceName = String.format("test3GBfromStreamSource%s.tmp",
-            String.valueOf(RND.nextInt(Integer.MAX_VALUE)));
-        Path sourceFile = CWD.resolve(sourceName);
-
-        try {
-            // set the target file name
-            String targetName = String.format("test3GBfromStreamTarget%s.tmp",
-                String.valueOf(RND.nextInt(Integer.MAX_VALUE)));
-            Path targetFile = CWD.resolve(targetName);
-
+        testMoreThanTwoGB("fromStream", sourceFile -> {
             try {
-                // calculate initial position to be just short of 2GB
-                final long initPos = 2047*BYTES_PER_WRITE;
-
-                // create the source file with a hint to be sparse
-                try (FileChannel fc = FileChannel.open(sourceFile, CREATE_NEW, SPARSE, WRITE, APPEND);) {
-                    // set initial position to avoid writing nearly 2GB
-                    fc.position(initPos);
-
-                    // fill the remainder of the file with random bytes
-                    int nw = (int)(NUM_WRITES - initPos/BYTES_PER_WRITE);
-                    for (int i = 0; i < nw; i++) {
-                        byte[] rndBytes = createRandomBytes(BYTES_PER_WRITE, 0);
-                        ByteBuffer src = ByteBuffer.wrap(rndBytes);
-                        fc.write(src);
-                    }
-                }
-
-                // create the target file with a hint to be sparse
-                try (FileChannel fc = FileChannel.open(targetFile, CREATE_NEW, WRITE, SPARSE);) {
-                }
-
-                // performing actual transfer, effectively by multiple invocations of
-                // FileChannel.transferFrom(ReadableByteChannel)
-                try (InputStream inputStream = Channels.newInputStream(Channels.newChannel(
-                        new BufferedInputStream(Files.newInputStream(sourceFile))));
-                     OutputStream outputStream = Channels.newOutputStream(FileChannel.open(targetFile, WRITE))) {
-                    long count = inputStream.transferTo(outputStream);
-
-                    // compare reported transferred bytes, must be 3 GB
-                    // less the value of the initial position
-                    assertEquals(count, BYTES_WRITTEN - initPos);
-                }
-
-                // compare content of both files, failing if different
-                assertEquals(Files.mismatch(sourceFile, targetFile), -1);
-
-            } finally {
-                 Files.delete(targetFile);
+                return Channels.newChannel(new BufferedInputStream(Files.newInputStream(sourceFile)));
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
             }
-        } finally {
-            Files.delete(sourceFile);
-        }
+        });
     }
 
     /*
