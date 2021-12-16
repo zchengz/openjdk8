@@ -37,7 +37,6 @@ import java.nio.channels.SelectableChannel;
 import java.nio.channels.WritableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.Random;
 import java.util.concurrent.CompletableFuture;
@@ -45,7 +44,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.testng.annotations.DataProvider;
@@ -89,7 +87,7 @@ public class TransferTo {
      * to be tested.
      */
     @DataProvider
-    public static Object[][] streamCombinations() throws Exception {
+    public static Object[][] streamCombinations() {
         return new Object[][] {
             // tests FileChannel.transferTo(FileChannel) optimized case
             { fileChannelInput(), fileChannelOutput() },
@@ -114,12 +112,24 @@ public class TransferTo {
     }
 
     /*
+     * Input streams to be tested.
+     */
+    @DataProvider
+    public static Object[][] inputStreamProviders() {
+        return new Object[][] {
+                { fileChannelInput()},
+                { selectableChannelInput()},
+                { readableByteChannelInput()},
+                { readableByteChannelInput()}
+        };
+    }
+
+    /*
      * Testing API compliance: input stream must throw NullPointerException
      * when parameter "out" is null.
      */
-    @Test(dataProvider = "streamCombinations")
-    public void testNullPointerException(InputStreamProvider inputStreamProvider,
-            OutputStreamProvider outputStreamProvider) throws Exception {
+    @Test(dataProvider = "inputStreamProviders")
+    public void testNullPointerException(InputStreamProvider inputStreamProvider) {
         // tests empty input stream
         assertThrows(NullPointerException.class, () -> inputStreamProvider.input().transferTo(null));
 
@@ -172,13 +182,13 @@ public class TransferTo {
         // prepare two temporary files to be compared at the end of the test
         // set the source file name
         String sourceName = String.format("test3GB%sSource%s.tmp", testName,
-            String.valueOf(RND.nextInt(Integer.MAX_VALUE)));
+            RND.nextInt(Integer.MAX_VALUE));
         Path sourceFile = CWD.resolve(sourceName);
 
         try {
             // set the target file name
             String targetName = String.format("test3GB%sTarget%s.tmp", testName,
-                String.valueOf(RND.nextInt(Integer.MAX_VALUE)));
+                RND.nextInt(Integer.MAX_VALUE));
             Path targetFile = CWD.resolve(targetName);
 
             try {
@@ -186,7 +196,7 @@ public class TransferTo {
                 final long initPos = 2047*BYTES_PER_WRITE;
 
                 // create the source file with a hint to be sparse
-                try (FileChannel fc = FileChannel.open(sourceFile, CREATE_NEW, SPARSE, WRITE, APPEND);) {
+                try (FileChannel fc = FileChannel.open(sourceFile, CREATE_NEW, SPARSE, WRITE, APPEND)) {
                     // set initial position to avoid writing nearly 2GB
                     fc.position(initPos);
 
@@ -200,7 +210,7 @@ public class TransferTo {
                 }
 
                 // create the target file with a hint to be sparse
-                try (FileChannel fc = FileChannel.open(targetFile, CREATE_NEW, WRITE, SPARSE);) {
+                try (FileChannel fc = FileChannel.open(targetFile, CREATE_NEW, WRITE, SPARSE)) {
                 }
 
                 // perform actual transfer, effectively by multiple invocations
@@ -342,13 +352,10 @@ public class TransferTo {
      * Creates a provider for an output stream which does not wrap a channel
      */
     private static OutputStreamProvider defaultOutput() {
-        return new OutputStreamProvider() {
-            @Override
-            public OutputStream output(Consumer<Supplier<byte[]>> spy) {
-                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                spy.accept(outputStream::toByteArray);
-                return outputStream;
-            }
+        return spy -> {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            spy.accept(outputStream::toByteArray);
+            return outputStream;
         };
     }
 
@@ -356,14 +363,11 @@ public class TransferTo {
      * Creates a provider for an input stream which wraps a file channel
      */
     private static InputStreamProvider fileChannelInput() {
-        return new InputStreamProvider() {
-            @Override
-            public InputStream input(byte... bytes) throws Exception {
-                Path path = Files.createTempFile(CWD, "fileChannelInput", null);
-                Files.write(path, bytes);
-                FileChannel fileChannel = FileChannel.open(path);
-                return Channels.newInputStream(fileChannel);
-            }
+        return bytes -> {
+            Path path = Files.createTempFile(CWD, "fileChannelInput", null);
+            Files.write(path, bytes);
+            FileChannel fileChannel = FileChannel.open(path);
+            return Channels.newInputStream(fileChannel);
         };
     }
 
@@ -372,30 +376,23 @@ public class TransferTo {
      * channel but is not a file channel
      */
     private static InputStreamProvider readableByteChannelInput() {
-        return new InputStreamProvider() {
-            @Override
-            public InputStream input(byte... bytes) throws Exception {
-                return Channels.newInputStream(Channels.newChannel(new ByteArrayInputStream(bytes)));
-            }
-        };
+        return bytes -> Channels.newInputStream(Channels.newChannel(new ByteArrayInputStream(bytes)));
     }
 
     /*
      * Creates a provider for an input stream which wraps a selectable channel
      */
-    private static InputStreamProvider selectableChannelInput() throws IOException {
-        return new InputStreamProvider() {
-            public InputStream input(byte... bytes) throws Exception {
-                Pipe pipe = Pipe.open();
-                new Thread(() -> {
-                    try (OutputStream os = Channels.newOutputStream(pipe.sink())) {
-                      os.write(bytes);
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                }).start();
-                return Channels.newInputStream(pipe.source());
-            }
+    private static InputStreamProvider selectableChannelInput() {
+        return bytes -> {
+            Pipe pipe = Pipe.open();
+            new Thread(() -> {
+                try (OutputStream os = Channels.newOutputStream(pipe.sink())) {
+                  os.write(bytes);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }).start();
+            return Channels.newInputStream(pipe.source());
         };
     }
 
@@ -403,48 +400,44 @@ public class TransferTo {
      * Creates a provider for an output stream which wraps a file channel
      */
     private static OutputStreamProvider fileChannelOutput() {
-        return new OutputStreamProvider() {
-            public OutputStream output(Consumer<Supplier<byte[]>> spy) throws Exception {
-                Path path = Files.createTempFile(CWD, "fileChannelOutput", null);
-                FileChannel fileChannel = FileChannel.open(path, WRITE);
-                spy.accept(() -> {
-                    try {
-                        return Files.readAllBytes(path);
-                    } catch (IOException e) {
-                        throw new AssertionError("Failed to verify output file", e);
-                    }
-                });
-                return Channels.newOutputStream(fileChannel);
-            }
+        return spy -> {
+            Path path = Files.createTempFile(CWD, "fileChannelOutput", null);
+            FileChannel fileChannel = FileChannel.open(path, WRITE);
+            spy.accept(() -> {
+                try {
+                    return Files.readAllBytes(path);
+                } catch (IOException e) {
+                    throw new AssertionError("Failed to verify output file", e);
+                }
+            });
+            return Channels.newOutputStream(fileChannel);
         };
     }
 
     /*
      * Creates a provider for an output stream which wraps a selectable channel
      */
-    private static OutputStreamProvider selectableChannelOutput() throws IOException {
-        return new OutputStreamProvider() {
-            public OutputStream output(Consumer<Supplier<byte[]>> spy) throws Exception {
-                Pipe pipe = Pipe.open();
-                Future<byte[]> bytes = CompletableFuture.supplyAsync(() -> {
-                    try {
-                        InputStream is = Channels.newInputStream(pipe.source());
-                        return is.readAllBytes();
-                    } catch (IOException e) {
-                        throw new AssertionError("Exception while asserting content", e);
-                    }
-                });
-                final OutputStream os = Channels.newOutputStream(pipe.sink());
-                spy.accept(() -> {
-                    try {
-                        os.close();
-                        return bytes.get();
-                    } catch (IOException | InterruptedException | ExecutionException e) {
-                        throw new AssertionError("Exception while asserting content", e);
-                    }
-                });
-                return os;
-            }
+    private static OutputStreamProvider selectableChannelOutput() {
+        return spy -> {
+            Pipe pipe = Pipe.open();
+            Future<byte[]> bytes = CompletableFuture.supplyAsync(() -> {
+                try {
+                    InputStream is = Channels.newInputStream(pipe.source());
+                    return is.readAllBytes();
+                } catch (IOException e) {
+                    throw new AssertionError("Exception while asserting content", e);
+                }
+            });
+            final OutputStream os = Channels.newOutputStream(pipe.sink());
+            spy.accept(() -> {
+                try {
+                    os.close();
+                    return bytes.get();
+                } catch (IOException | InterruptedException | ExecutionException e) {
+                    throw new AssertionError("Exception while asserting content", e);
+                }
+            });
+            return os;
         };
     }
 
@@ -452,12 +445,10 @@ public class TransferTo {
      * Creates a provider for an output stream which wraps a writable byte channel but is not a file channel
      */
     private static OutputStreamProvider writableByteChannelOutput() {
-        return new OutputStreamProvider() {
-            public OutputStream output(Consumer<Supplier<byte[]>> spy) throws Exception {
-                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                spy.accept(outputStream::toByteArray);
-                return Channels.newOutputStream(Channels.newChannel(outputStream));
-            }
+        return spy -> {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            spy.accept(outputStream::toByteArray);
+            return Channels.newOutputStream(Channels.newChannel(outputStream));
         };
     }
 }
