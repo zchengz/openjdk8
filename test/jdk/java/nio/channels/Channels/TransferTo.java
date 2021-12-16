@@ -119,7 +119,6 @@ public class TransferTo {
         return new Object[][] {
                 { fileChannelInput()},
                 { selectableChannelInput()},
-                { readableByteChannelInput()},
                 { readableByteChannelInput()}
         };
     }
