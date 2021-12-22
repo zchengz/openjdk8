@@ -89,18 +89,18 @@ public class TransferTo {
     public static Object[][] streamCombinations() {
         return new Object[][] {
             // tests FileChannel.transferTo(FileChannel) optimized case
-            { fileChannelInput(), fileChannelOutput() },
+            {fileChannelInput(), fileChannelOutput()},
 
             // tests FileChannel.transferTo(SelectableChannelOutput)
             // optimized case
-            { fileChannelInput(), selectableChannelOutput() },
+            {fileChannelInput(), selectableChannelOutput()},
 
             // tests FileChannel.transferTo(WritableByteChannelOutput)
             // optimized case
-            { fileChannelInput(), writableByteChannelOutput() },
+            {fileChannelInput(), writableByteChannelOutput()},
 
             // tests InputStream.transferTo(OutputStream) default case
-            { readableByteChannelInput(), defaultOutput() }
+            {readableByteChannelInput(), defaultOutput()}
         };
     }
 
@@ -110,8 +110,8 @@ public class TransferTo {
     @DataProvider
     public static Object[][] inputStreamProviders() {
         return new Object[][] {
-                { fileChannelInput()},
-                { readableByteChannelInput()}
+                {fileChannelInput()},
+                {readableByteChannelInput()}
         };
     }
 
@@ -194,7 +194,7 @@ public class TransferTo {
                     // set initial position to avoid writing nearly 2GB
                     fc.position(initPos);
 
-                    // fill the remainder of the file with random bytes
+                    // Add random bytes to the remainder of the file
                     int nw = (int)(NUM_WRITES - initPos/BYTES_PER_WRITE);
                     for (int i = 0; i < nw; i++) {
                         byte[] rndBytes = createRandomBytes(BYTES_PER_WRITE, 0);
@@ -275,7 +275,7 @@ public class TransferTo {
     }
 
     /*
-     * Asserts that the transferred content is correct, i. e. compares the bytes
+     * Asserts that the transferred content is correct, i.e. compares the bytes
      * actually transferred to those expected. The positions of the input and
      * output streams before the transfer are provided by the caller.
      */

@@ -39,9 +39,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Random;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -63,7 +60,7 @@ import static org.testng.Assert.assertTrue;
  * @library /test/lib
  * @build jdk.test.lib.RandomFactory
  * @run testng/othervm/timeout=180 TransferTo2
- * @bug 8265891
+ * @bug 8278268
  * @summary Tests FileChannel.transferFrom() optimized case
  * @key randomness
  */
@@ -89,10 +86,10 @@ public class TransferTo2 {
     public static Object[][] streamCombinations() {
         return new Object[][] {
             // tests FileChannel.transferFrom(SelectableChannelOutput) optimized case
-            { selectableChannelInput(), fileChannelOutput() },
+            {selectableChannelInput(), fileChannelOutput()},
 
             // tests FileChannel.transferFrom(ReadableByteChannelInput) optimized case
-            { readableByteChannelInput(), fileChannelOutput() },
+            {readableByteChannelInput(), fileChannelOutput()},
         };
     }
 
@@ -102,8 +99,8 @@ public class TransferTo2 {
     @DataProvider
     public static Object[][] inputStreamProviders() {
         return new Object[][] {
-            { selectableChannelInput()},
-            { readableByteChannelInput()}
+            {selectableChannelInput()},
+            {readableByteChannelInput()}
         };
     }
 
@@ -186,7 +183,7 @@ public class TransferTo2 {
                     // set initial position to avoid writing nearly 2GB
                     fc.position(initPos);
 
-                    // fill the remainder of the file with random bytes
+                    // Add random bytes to the remainder of the file
                     int nw = (int)(NUM_WRITES - initPos/BYTES_PER_WRITE);
                     for (int i = 0; i < nw; i++) {
                         byte[] rndBytes = createRandomBytes(BYTES_PER_WRITE, 0);
@@ -268,7 +265,7 @@ public class TransferTo2 {
     }
 
     /*
-     * Asserts that the transferred content is correct, i. e. compares the bytes
+     * Asserts that the transferred content is correct, i.e. compares the bytes
      * actually transferred to those expected. The positions of the input and
      * output streams before the transfer are provided by the caller.
      */
