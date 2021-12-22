@@ -197,7 +197,7 @@ static void calculate_updated_load(CPUPerfTicks* update, CPUPerfTicks* prev, dou
 /**
  * Look up lcpu names for later re-use.
  */
-bool populate_lcpu_names(int ncpus, perfstat_id_t* lcpu_names) {
+static bool populate_lcpu_names(int ncpus, perfstat_id_t* lcpu_names) {
   perfstat_cpu_t* all_lcpu_stats;
   perfstat_cpu_t* lcpu_stats;
   perfstat_id_t   name_holder;
@@ -604,6 +604,8 @@ int NetworkPerformanceInterface::NetworkPerformance::network_utilization(Network
   perfstat_netinterface_t* net_stats;
   perfstat_id_t name_holder;
   int records_allocated = 0;
+
+  assert(network_interfaces != NULL, "network_interfaces is NULL");
 
   assert(network_interfaces != NULL, "network_interfaces is NULL");
 
