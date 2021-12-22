@@ -62,7 +62,7 @@ import static org.testng.Assert.assertTrue;
  * @test
  * @library /test/lib
  * @build jdk.test.lib.RandomFactory
- * @run testng/othervm/timeout=180 TransferTo
+ * @run testng/othervm/timeout=180 TransferTo2
  * @bug 8265891
  * @summary Tests FileChannel.transferFrom() optimized case
  * @key randomness
