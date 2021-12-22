@@ -64,19 +64,7 @@ import static org.testng.Assert.assertTrue;
  * @summary Tests FileChannel.transferFrom() optimized case
  * @key randomness
  */
-public class TransferTo2 {
-    private static final int MIN_SIZE      = 10_000;
-    private static final int MAX_SIZE_INCR = 100_000_000 - MIN_SIZE;
-
-    private static final int ITERATIONS = 10;
-
-    private static final int NUM_WRITES = 3*1024;
-    private static final int BYTES_PER_WRITE = 1024*1024;
-    private static final long BYTES_WRITTEN = (long) NUM_WRITES*BYTES_PER_WRITE;
-
-    private static final Random RND = RandomFactory.getRandom();
-
-    private static final Path CWD = Path.of(".");
+public class TransferTo2 extends AbstractTransferTo {
 
     /*
      * Provides test scenarios, i.e., combinations of input and output streams
@@ -102,55 +90,6 @@ public class TransferTo2 {
             {selectableChannelInput()},
             {readableByteChannelInput()}
         };
-    }
-
-    /*
-     * Testing API compliance: input stream must throw NullPointerException
-     * when parameter "out" is null.
-     */
-    @Test(dataProvider = "inputStreamProviders")
-    public void testNullPointerException(InputStreamProvider inputStreamProvider) {
-        // tests empty input stream
-        assertThrows(NullPointerException.class, () -> inputStreamProvider.input().transferTo(null));
-
-        // tests single-byte input stream
-        assertThrows(NullPointerException.class, () -> inputStreamProvider.input((byte) 1).transferTo(null));
-
-        // tests dual-byte input stream
-        assertThrows(NullPointerException.class, () -> inputStreamProvider.input((byte) 1, (byte) 2).transferTo(null));
-    }
-
-    /*
-     * Testing API compliance: complete content of input stream must be
-     * transferred to output stream.
-     */
-    @Test(dataProvider = "streamCombinations")
-    public void testStreamContents(InputStreamProvider inputStreamProvider,
-            OutputStreamProvider outputStreamProvider) throws Exception {
-        // tests empty input stream
-        checkTransferredContents(inputStreamProvider, outputStreamProvider, new byte[0]);
-
-        // tests input stream with a length between 1k and 4k
-        checkTransferredContents(inputStreamProvider, outputStreamProvider, createRandomBytes(1024, 4096));
-
-        // tests input stream with several data chunks, as 16k is more than a
-        // single chunk can hold
-        checkTransferredContents(inputStreamProvider, outputStreamProvider, createRandomBytes(16384, 16384));
-
-        // tests randomly chosen starting positions within source and
-        // target stream
-        for (int i = 0; i < ITERATIONS; i++) {
-            byte[] inBytes = createRandomBytes(MIN_SIZE, MAX_SIZE_INCR);
-            int posIn = RND.nextInt(inBytes.length);
-            int posOut = RND.nextInt(MIN_SIZE);
-            checkTransferredContents(inputStreamProvider, outputStreamProvider, inBytes, posIn, posOut);
-        }
-
-        // tests reading beyond source EOF (must not transfer any bytes)
-        checkTransferredContents(inputStreamProvider, outputStreamProvider, createRandomBytes(4096, 0), 4096, 0);
-
-        // tests writing beyond target EOF (must extend output stream)
-        checkTransferredContents(inputStreamProvider, outputStreamProvider, createRandomBytes(4096, 0), 0, 4096);
     }
 
     /*
@@ -220,102 +159,6 @@ public class TransferTo2 {
     }
 
     /*
-     * Special test whether selectable channel based transfer throws blocking mode exception.
-     */
-    @Test
-    public void testIllegalBlockingMode() throws IOException {
-        Pipe pipe = Pipe.open();
-        try {
-            // testing arbitrary input (here: empty file) to non-blocking
-            // selectable output
-            try (FileChannel fc = FileChannel.open(Files.createTempFile(CWD, "testIllegalBlockingMode", null));
-                InputStream is = Channels.newInputStream(fc);
-                SelectableChannel sc = pipe.sink().configureBlocking(false);
-                OutputStream os = Channels.newOutputStream((WritableByteChannel) sc)) {
-
-                // IllegalBlockingMode must be thrown when trying to perform
-                // a transfer
-                assertThrows(IllegalBlockingModeException.class, () -> is.transferTo(os));
-            }
-
-            // testing non-blocking selectable input to arbitrary output
-            // (here: byte array)
-            try (SelectableChannel sc = pipe.source().configureBlocking(false);
-                InputStream is = Channels.newInputStream((ReadableByteChannel) sc);
-                OutputStream os = new ByteArrayOutputStream()) {
-
-                // IllegalBlockingMode must be thrown when trying to perform
-                // a transfer
-                assertThrows(IllegalBlockingModeException.class, () -> is.transferTo(os));
-            }
-        } finally {
-            pipe.source().close();
-            pipe.sink().close();
-        }
-    }
-
-    /*
-     * Asserts that the transferred content is correct, i.e., compares the bytes
-     * actually transferred to those expected. The position of the input and
-     * output streams before the transfer are zero (BOF).
-     */
-    private static void checkTransferredContents(InputStreamProvider inputStreamProvider,
-            OutputStreamProvider outputStreamProvider, byte[] inBytes) throws Exception {
-        checkTransferredContents(inputStreamProvider, outputStreamProvider, inBytes, 0, 0);
-    }
-
-    /*
-     * Asserts that the transferred content is correct, i.e. compares the bytes
-     * actually transferred to those expected. The positions of the input and
-     * output streams before the transfer are provided by the caller.
-     */
-    private static void checkTransferredContents(InputStreamProvider inputStreamProvider,
-            OutputStreamProvider outputStreamProvider, byte[] inBytes, int posIn, int posOut) throws Exception {
-        AtomicReference<Supplier<byte[]>> recorder = new AtomicReference<>();
-        try (InputStream in = inputStreamProvider.input(inBytes);
-            OutputStream out = outputStreamProvider.output(recorder::set)) {
-            // skip bytes until starting position
-            in.skipNBytes(posIn);
-            out.write(new byte[posOut]);
-
-            long reported = in.transferTo(out);
-            int count = inBytes.length - posIn;
-
-            assertEquals(reported, count, format("reported %d bytes but should report %d", reported, count));
-
-            byte[] outBytes = recorder.get().get();
-            assertTrue(Arrays.equals(inBytes, posIn, posIn + count, outBytes, posOut, posOut + count),
-                format("inBytes.length=%d, outBytes.length=%d", count, outBytes.length));
-        }
-    }
-
-    /*
-     * Creates an array of random size (between min and min + maxRandomAdditive)
-     * filled with random bytes
-     */
-    private static byte[] createRandomBytes(int min, int maxRandomAdditive) {
-        byte[] bytes = new byte[min + (maxRandomAdditive == 0 ? 0 : RND.nextInt(maxRandomAdditive))];
-        RND.nextBytes(bytes);
-        return bytes;
-    }
-
-    private interface InputStreamProvider {
-        InputStream input(byte... bytes) throws Exception;
-    }
-
-    private interface OutputStreamProvider {
-        OutputStream output(Consumer<Supplier<byte[]>> spy) throws Exception;
-    }
-
-    /*
-     * Creates a provider for an input stream which wraps a readable byte
-     * channel but is not a file channel
-     */
-    private static InputStreamProvider readableByteChannelInput() {
-        return bytes -> Channels.newInputStream(Channels.newChannel(new ByteArrayInputStream(bytes)));
-    }
-
-    /*
      * Creates a provider for an input stream which wraps a selectable channel
      */
     private static InputStreamProvider selectableChannelInput() {
@@ -332,21 +175,4 @@ public class TransferTo2 {
         };
     }
 
-    /*
-     * Creates a provider for an output stream which wraps a file channel
-     */
-    private static OutputStreamProvider fileChannelOutput() {
-        return spy -> {
-            Path path = Files.createTempFile(CWD, "fileChannelOutput", null);
-            FileChannel fileChannel = FileChannel.open(path, WRITE);
-            spy.accept(() -> {
-                try {
-                    return Files.readAllBytes(path);
-                } catch (IOException e) {
-                    throw new AssertionError("Failed to verify output file", e);
-                }
-            });
-            return Channels.newOutputStream(fileChannel);
-        };
-    }
 }
