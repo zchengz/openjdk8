@@ -95,6 +95,55 @@ public class TransferTo extends TransferToBase {
     }
 
     /*
+     * Testing API compliance: input stream must throw NullPointerException
+     * when parameter "out" is null.
+     */
+    @Test(dataProvider = "inputStreamProviders")
+    public void testNullPointerException(InputStreamProvider inputStreamProvider) {
+        // tests empty input stream
+        assertThrows(NullPointerException.class, () -> inputStreamProvider.input().transferTo(null));
+
+        // tests single-byte input stream
+        assertThrows(NullPointerException.class, () -> inputStreamProvider.input((byte) 1).transferTo(null));
+
+        // tests dual-byte input stream
+        assertThrows(NullPointerException.class, () -> inputStreamProvider.input((byte) 1, (byte) 2).transferTo(null));
+    }
+
+    /*
+     * Testing API compliance: complete content of input stream must be
+     * transferred to output stream.
+     */
+    @Test(dataProvider = "streamCombinations")
+    public void testStreamContents(InputStreamProvider inputStreamProvider,
+            OutputStreamProvider outputStreamProvider) throws Exception {
+        // tests empty input stream
+        checkTransferredContents(inputStreamProvider, outputStreamProvider, new byte[0]);
+
+        // tests input stream with a length between 1k and 4k
+        checkTransferredContents(inputStreamProvider, outputStreamProvider, createRandomBytes(1024, 4096));
+
+        // tests input stream with several data chunks, as 16k is more than a
+        // single chunk can hold
+        checkTransferredContents(inputStreamProvider, outputStreamProvider, createRandomBytes(16384, 16384));
+
+        // tests randomly chosen starting positions within source and
+        // target stream
+        for (int i = 0; i < ITERATIONS; i++) {
+            byte[] inBytes = createRandomBytes(MIN_SIZE, MAX_SIZE_INCR);
+            int posIn = RND.nextInt(inBytes.length);
+            int posOut = RND.nextInt(MIN_SIZE);
+            checkTransferredContents(inputStreamProvider, outputStreamProvider, inBytes, posIn, posOut);
+        }
+
+        // tests reading beyond source EOF (must not transfer any bytes)
+        checkTransferredContents(inputStreamProvider, outputStreamProvider, createRandomBytes(4096, 0), 4096, 0);
+
+        // tests writing beyond target EOF (must extend output stream)
+        checkTransferredContents(inputStreamProvider, outputStreamProvider, createRandomBytes(4096, 0), 0, 4096);
+    }
+
+    /*
      * Special test for file-to-stream transfer of more than 2 GB. This test
      * covers multiple iterations of FileChannel.transferTo(WritableByteChannel),
      * which ChannelInputStream.transferTo() only applies in this particular
