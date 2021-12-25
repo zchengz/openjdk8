@@ -58,7 +58,7 @@ import static org.testng.Assert.assertThrows;
  *          InputStream.transferTo specification
  * @key randomness
  */
-public class TransferTo extends AbstractTransferTo {
+public class TransferTo extends TransferToBase {
 
     /*
      * Provides test scenarios, i.e., combinations of input and output streams

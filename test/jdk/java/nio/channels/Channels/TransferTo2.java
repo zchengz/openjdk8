@@ -49,7 +49,7 @@ import static org.testng.Assert.assertEquals;
  * @summary Tests FileChannel.transferFrom() optimized case
  * @key randomness
  */
-public class TransferTo2 extends AbstractTransferTo {
+public class TransferTo2 extends TransferToBase {
 
     /*
      * Provides test scenarios, i.e., combinations of input and output streams

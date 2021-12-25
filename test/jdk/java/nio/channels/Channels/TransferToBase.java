@@ -46,7 +46,7 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
 
-class AbstractTransferTo {
+class TransferToBase {
     private static final int MIN_SIZE      = 10_000;
     private static final int MAX_SIZE_INCR = 100_000_000 - MIN_SIZE;
 
