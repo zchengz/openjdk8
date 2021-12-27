@@ -488,7 +488,7 @@ public class BufferedInputStream extends FilterInputStream {
     }
 
     @Override
-    public long transferTo(OutputStream out) throws IOException {
+    public synchronized long transferTo(OutputStream out) throws IOException {
         Objects.requireNonNull(out, "out");
         int avail = count - pos;
         if (avail > 0) {
