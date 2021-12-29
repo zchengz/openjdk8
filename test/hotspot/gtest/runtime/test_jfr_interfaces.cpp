@@ -1,3 +1,4 @@
+#include "precompiled.hpp"
 #include "unittest.hpp"
 #include "runtime/os.hpp"
 #include "runtime/os_perf.hpp"
