@@ -75,9 +75,12 @@ public class TestNativeLibrariesEvent {
             libTemplate = "%s.dll";
         } else if (Platform.isOSX()) {
             libTemplate = "lib%s.dylib";
-        } else if (Platform.isLinux() || Platform.isAix()) {
+        } else if (Platform.isLinux()) {
             libTemplate = "lib%s.so";
+        } else if (Platform.isAix()) {
+            libTemplate = "";
         }
+
         if (libTemplate == null) {
             throw new Exception("Unsupported OS");
         }

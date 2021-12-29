@@ -554,6 +554,7 @@ int NetworkPerformanceInterface::NetworkPerformance::network_utilization(Network
 
   // populate net_stats && check that the expected number of records have been populated
   if (n_records > (perfstat_netinterface(&name_holder, all_net_stats, sizeof(perfstat_netinterface_t), n_records))) {
+    FREE_RESOURCE_ARRAY(perfstat_netinterface_t, all_net_stats, 1);
     return OS_ERR;
   }
 
