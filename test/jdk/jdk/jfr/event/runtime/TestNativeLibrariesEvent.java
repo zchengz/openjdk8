@@ -75,7 +75,7 @@ public class TestNativeLibrariesEvent {
             libTemplate = "%s.dll";
         } else if (Platform.isOSX()) {
             libTemplate = "lib%s.dylib";
-        } else if (Platform.isLinux()) {
+        } else if (Platform.isLinux() || Platform.isAix()) {
             libTemplate = "lib%s.so";
         }
         if (libTemplate == null) {
