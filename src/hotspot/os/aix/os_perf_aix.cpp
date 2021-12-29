@@ -537,12 +537,12 @@ int NetworkPerformanceInterface::NetworkPerformance::network_utilization(Network
   assert(network_interfaces != NULL, "network_interfaces is NULL");
 
   int n_records = 0;
-  NetworkInterface* head = NULL;
+  NetworkInterface* head = *network_interfaces;
   perfstat_netinterface_t* net_stats;
   perfstat_netinterface_t* all_net_stats;
   perfstat_id_t name_holder;
 
-  *network_interfaces = NULL;
+  head = NULL;
   strncpy(name_holder.name , FIRST_NETINTERFACE, IDENTIFIER_LENGTH);
 
   // calling perfstat_<subsyste>(NULL, NULL, ..., 0) returns number of available records
@@ -570,7 +570,6 @@ int NetworkPerformanceInterface::NetworkPerformance::network_utilization(Network
   }
 
   FREE_RESOURCE_ARRAY(perfstat_netinterface_t, all_net_stats, 1);
-
   return OS_OK;
 }
 
