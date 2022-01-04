@@ -78,7 +78,7 @@ public class TestNativeLibrariesEvent {
         } else if (Platform.isLinux()) {
             libTemplate = "lib%s.so";
         } else if (Platform.isAix()) {
-            // TODO: Fill this in with the correct value!
+            libTemplate = "lib%s.so";
         }
 
         if (libTemplate == null) {

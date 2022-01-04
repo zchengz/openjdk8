@@ -55,15 +55,9 @@ typedef struct {
 } CPUPerfTicks;
 
 typedef struct {
-  pid64_t pid;
-  char    name[PRFNSZ];
-  char    command_line[PRARGSZ];
-} psinfo_subset_t;
-
-typedef enum {
-  CPU_LOAD_VM_ONLY,
-  CPU_LOAD_GLOBAL,
-} CpuLoadTarget;
+  double utime;
+  double stime;
+} JVMTime;
 
 enum {
   UNDETECTED,
@@ -78,12 +72,16 @@ enum {
 static OSReturn get_lcpu_ticks(perfstat_id_t* lcpu_name, CPUPerfTicks* pticks) {
   perfstat_cpu_t lcpu_stats;
 
-  assert(pticks != NULL, "NULL pointer passed");
-  assert(_lcpu_names != NULL, "CPUPerformance un-initialized");
-  assert(lcpu_idx < _ncpus, "Invalid CPU index");
+  if (!pticks) {
+    return OS_ERR;
+  }
 
   // populate cpu_stats
-  if (1 == perfstat_cpu(lcpu_name, &lcpu_stats, sizeof(perfstat_cpu_t), 1)) {
+  if (perfstat_cpu(lcpu_name, &lcpu_stats, sizeof(perfstat_cpu_t), 1) < 1) {
+    pticks->user = 0;
+    pticks->sys  = 0;
+    pticks->idle = 0;
+    pticks->wait = 0;
     return OS_ERR;
   }
 
@@ -96,52 +94,43 @@ static OSReturn get_lcpu_ticks(perfstat_id_t* lcpu_name, CPUPerfTicks* pticks) {
 }
 
 /**
- * Set and return a value in [0.0, 1.0] by capping any value above the range to 1.0,
- * and any value below the range to 0.0. Any value already in (0.0, 1.0) remains unchanged.
- *
- * For convenienve, this procedure both sets the pointer to the (possibly) new value, and returns a copy.
- */
-static double normalize(double* val) {
-  *val = MIN2<double>(*val, 1.0);
-  *val = MAX2<double>(*val, 0.0);
-  return *val;
-}
-
-/**
  * Return CPU load caused by the currently executing process (the jvm).
  */
-static OSReturn get_jvm_load(double* jvm_user_load, double* jvm_kernel_load, double* jvm_total_load) {
+static OSReturn get_jvm_load(double* jvm_uload, double* jvm_sload) {
+  static clock_t ticks_per_sec = sysconf(_SC_CLK_TCK);
+  static u_longlong_t last_timebase = 0;
+
   perfstat_process_t jvm_stats;
-  perfstat_rawdata_t perfstat_lookup_data;
+  perfstat_id_t name_holder;
+  u_longlong_t timebase_diff;
 
-  perfstat_lookup_data.type = UTIL_PROCESS;
-  snprintf(perfstat_lookup_data.name.name, IDENTIFIER_LENGTH, "%d", getpid());
-  perfstat_lookup_data.curstat = NULL;
-  perfstat_lookup_data.prevstat = NULL;
-  perfstat_lookup_data.sizeof_data = sizeof(perfstat_process_t);
-  perfstat_lookup_data.cur_elems = 0;
-  perfstat_lookup_data.prev_elems = 0;
-
-  if (0 < perfstat_process_util(&perfstat_lookup_data, &jvm_stats, sizeof(perfstat_process_t), 1)) {
+  snprintf(name_holder.name, IDENTIFIER_LENGTH, "%d", getpid());
+  if (perfstat_process(&name_holder, &jvm_stats, sizeof(perfstat_process_t), 1) < 1) {
     return OS_ERR;
   }
 
-  // when called via perfstat_process_util, ucpu_time and scpu_time fields are
-  // populated with percentages rather than time.
-  if (jvm_user_load) {
-    *jvm_user_load = jvm_stats.ucpu_time;
+  // Update timebase
+  timebase_diff = jvm_stats.last_timebase - last_timebase;
+  last_timebase = jvm_stats.last_timebase;
+
+  if (jvm_uload) {
+    *jvm_uload = jvm_stats.ucpu_time / timebase_diff;
   }
-  if (jvm_kernel_load) {
-    *jvm_kernel_load = jvm_stats.scpu_time;
-  }
-  if (jvm_total_load) {
-    *jvm_total_load = jvm_stats.ucpu_time + jvm_stats.scpu_time;
+  if (jvm_sload) {
+    *jvm_sload = jvm_stats.scpu_time / timebase_diff;
   }
 
   return OS_OK;
 }
 
-static void update_last_ticks(CPUPerfTicks* from, CPUPerfTicks* to) {
+static void update_prev_time(JVMTime* from, JVMTime* to) {
+  if (from && to) {
+    to->utime = from->utime;
+    to->stime = from->stime;
+  }
+}
+
+static void update_prev_ticks(CPUPerfTicks* from, CPUPerfTicks* to) {
   if (from && to) {
     to->user = from->user;
     to->sys  = from->sys;
@@ -170,26 +159,28 @@ static void calculate_updated_load(CPUPerfTicks* update, CPUPerfTicks* prev, dou
  * Look up lcpu names for later re-use.
  */
 static void populate_lcpu_names(int ncpus, perfstat_id_t* lcpu_names) {
-  int n_records;
   perfstat_cpu_t* all_lcpu_stats;
   perfstat_cpu_t* lcpu_stats;
   perfstat_id_t   name_holder;
 
+  assert(lcpu_names, "Names pointer NULL");
+
   strncpy(name_holder.name, FIRST_CPU, IDENTIFIER_LENGTH);
 
-  // calling perfstat_<subsystem>(NULL, NULL, _, 0) returns number of available records
-  assert(0 > (n_records = perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_t), 0)));
-
-  all_lcpu_stats = (perfstat_cpu_t*) NEW_RESOURCE_ARRAY(perfstat_cpu_t, n_records);
+  all_lcpu_stats = (perfstat_cpu_t*) NEW_RESOURCE_ARRAY(perfstat_cpu_t, ncpus);
 
   // populate cpu_stats && check that the expected number of records have been populated
-  assert(ncpus == perfstat_cpu(&name_holder, all_lcpu_stats, sizeof(perfstat_cpu_t), n_records));
-
-  for (int record=0; record < n_records; record++) {
-    strncpy(lcpu_names[record].name, all_lcpu_stats[record].name, IDENTIFIER_LENGTH);
+  if (ncpus > perfstat_cpu(&name_holder, all_lcpu_stats, sizeof(perfstat_cpu_t), ncpus)) {
+    FREE_RESOURCE_ARRAY(perfstat_cpu_t, all_lcpu_stats, ncpus);
+    lcpu_names = NULL;
+    return;
   }
 
-  FREE_RESOURCE_ARRAY(perfstat_cpu_t, all_lcpu_stats, n_records);
+  for (int n=0; n < ncpus; n++) {
+    strncpy(lcpu_names[n].name, all_lcpu_stats[n].name, IDENTIFIER_LENGTH);
+  }
+
+  FREE_RESOURCE_ARRAY(perfstat_cpu_t, all_lcpu_stats, ncpus);
 }
 
 /**
@@ -200,20 +191,14 @@ static OSReturn perf_context_switch_rate(double* rate) {
   static clock_t ticks_per_sec = sysconf(_SC_CLK_TCK);
 
   u_longlong_t ticks;
-  perfstat_cpu_total_t* cpu_stats;
+  perfstat_cpu_total_t cpu_stats;
 
-  assert(rate != NULL, "NULL pointer passed");
-
-  cpu_stats = (perfstat_cpu_total_t*) NEW_RESOURCE_ARRAY(perfstat_cpu_total_t, 1);
-
-   if (0 < perfstat_cpu_total(NULL, cpu_stats, sizeof(perfstat_cpu_total_t), 1)) {
+   if (perfstat_cpu_total(NULL, &cpu_stats, sizeof(perfstat_cpu_total_t), 1) < 0) {
      return OS_ERR;
    }
 
-   ticks = cpu_stats->user + cpu_stats->sys + cpu_stats->idle + cpu_stats->wait;
-   *rate = (cpu_stats->pswitch / ticks) * ticks_per_sec;
-
-   FREE_RESOURCE_ARRAY(perfstat_cpu_total_t, cpu_stats, 1);
+   ticks = cpu_stats.user + cpu_stats.sys + cpu_stats.idle + cpu_stats.wait;
+   *rate = (cpu_stats.pswitch / ticks) * ticks_per_sec;
 
    return OS_OK;
 }
@@ -222,7 +207,7 @@ class CPUPerformanceInterface::CPUPerformance : public CHeapObj<mtInternal> {
  private:
   int _ncpus;
   perfstat_id_t* _lcpu_names;
-  CPUPerfTicks _last_total_ticks;
+  CPUPerfTicks* _prev_ticks;
 
  public:
   CPUPerformance();
@@ -235,33 +220,34 @@ class CPUPerformanceInterface::CPUPerformance : public CHeapObj<mtInternal> {
   int cpu_loads_process(double* pjvmUserLoad, double* pjvmKernelLoad, double* psystemTotalLoad);
 };
 
-CPUPerformanceInterface::CPUPerformance::CPUPerformance() {
-  /* Set default values only */
-  _ncpus = 0;
-  _lcpu_names = NULL;
-
-  _last_total_ticks.user = 0;
-  _last_total_ticks.sys  = 0;
-  _last_total_ticks.idle = 0;
-  _last_total_ticks.wait = 0;
-}
+CPUPerformanceInterface::CPUPerformance::CPUPerformance():
+  _ncpus(0),
+  _lcpu_names(NULL),
+  _prev_ticks(NULL) {}
 
 bool CPUPerformanceInterface::CPUPerformance::initialize() {
-  perfstat_cpu_total_t* cpu_stats;
+  perfstat_cpu_total_t cpu_stats;
 
-  cpu_stats = (perfstat_cpu_total_t*) NEW_RESOURCE_ARRAY(perfstat_cpu_total_t, 1);
-
-   if (perfstat_cpu_total(NULL, cpu_stats, sizeof(perfstat_cpu_total_t), 1) < 0) {
-     FREE_RESOURCE_ARRAY(perfstat_cpu_total_t, cpu_stats, 1);
+   if (perfstat_cpu_total(NULL, &cpu_stats, sizeof(perfstat_cpu_total_t), 1) < 0) {
      return false;
   }
 
-  _ncpus = cpu_stats->ncpus;
-  _lcpu_names = NEW_C_HEAP_ARRAY(perfstat_id_t, cpu_stats->ncpus, mtInternal);
+  _ncpus = cpu_stats.ncpus;
+
+  _lcpu_names = NEW_C_HEAP_ARRAY(perfstat_id_t, _ncpus, mtInternal);
   populate_lcpu_names(_ncpus, _lcpu_names);
 
-  FREE_RESOURCE_ARRAY(perfstat_cpu_total_t, cpu_stats, 1);
-  return true;
+  _prev_ticks = NEW_C_HEAP_ARRAY(CPUPerfTicks,  _ncpus, mtInternal);
+  // Set all prev-tick values to 0
+  // memset(_prev_ticks, 0, _ncpus*sizeof(CPUPerfTicks));
+  for (int n = 0; n < _ncpus; n++) {
+    _prev_ticks[n].user = 0;
+    _prev_ticks[n].sys  = 0;
+    _prev_ticks[n].idle = 0;
+    _prev_ticks[n].wait = 0;
+  }
+
+  return _lcpu_names != NULL;
 }
 
 CPUPerformanceInterface::CPUPerformance::~CPUPerformance() {
@@ -273,18 +259,19 @@ CPUPerformanceInterface::CPUPerformance::~CPUPerformance() {
 /**
  * Get CPU load for all processes on specified logical CPU.
  */
-int CPUPerformanceInterface::CPUPerformance::cpu_load(int which_logical_cpu, double* lcpu_load) {
-  CPUPerfTicks lcpu_stats;
+int CPUPerformanceInterface::CPUPerformance::cpu_load(int lcpu_number, double* lcpu_load) {
+  CPUPerfTicks ticks;
 
   assert(lcpu_load != NULL, "NULL pointer passed to cpu_load");
+  assert(lcpu_number < _ncpus, "Invalid lcpu passed to cpu_load");
 
-  if (get_lcpu_ticks(&_lcpu_names[which_logical_cpu], &lcpu_stats) == OS_ERR) {
-    *lcpu_load = 0.0;
+  if (get_lcpu_ticks(&_lcpu_names[lcpu_number], &ticks) == OS_ERR) {
+    *lcpu_load = -1.0;
     return OS_ERR;
   }
 
-  calculate_updated_load(&lcpu_stats, &_last_total_ticks, lcpu_load);
-  update_last_ticks(&lcpu_stats, &_last_total_ticks);
+  calculate_updated_load(&ticks, &_prev_ticks[lcpu_number], lcpu_load);
+  update_prev_ticks(&ticks, &_prev_ticks[lcpu_number]);
 
   return OS_OK;
 }
@@ -293,19 +280,44 @@ int CPUPerformanceInterface::CPUPerformance::cpu_load(int which_logical_cpu, dou
  * Get CPU load for all processes on all CPUs.
  */
 int CPUPerformanceInterface::CPUPerformance::cpu_load_total_process(double* total_load) {
-  double load_avg = 0.0;
+  CPUPerfTicks total_ticks;
+  CPUPerfTicks prev_total_ticks;
 
   assert(total_load != NULL, "NULL pointer passed to cpu_load_total_process");
 
-  for (int cpu=0; cpu < _ncpus; cpu++) {
-    double l;
-    if (cpu_load(cpu, &l) != OS_ERR) {
-      load_avg += l;
-    }
-  }
-  load_avg = load_avg/_ncpus;
+  total_ticks.user = 0;
+  total_ticks.sys  = 0;
+  total_ticks.idle = 0;
+  total_ticks.wait = 0;
 
-  *total_load = load_avg;
+  prev_total_ticks.user = 0;
+  prev_total_ticks.sys  = 0;
+  prev_total_ticks.idle = 0;
+  prev_total_ticks.wait = 0;
+
+  for (int lcpu = 0; lcpu < _ncpus; lcpu++) {
+    CPUPerfTicks lcpu_ticks;
+
+    if (get_lcpu_ticks(&_lcpu_names[lcpu], &lcpu_ticks) == OS_ERR) {
+      *total_load = -1.0;
+      printf("Error: Could not calculate load for lcpu %s\n", _lcpu_names[lcpu].name);
+      return OS_ERR;
+    }
+
+    total_ticks.user = lcpu_ticks.user;
+    total_ticks.sys  = lcpu_ticks.sys;
+    total_ticks.idle = lcpu_ticks.idle;
+    total_ticks.wait = lcpu_ticks.wait;
+
+    prev_total_ticks.user += _prev_ticks[lcpu].user;
+    prev_total_ticks.sys  += _prev_ticks[lcpu].sys;
+    prev_total_ticks.idle += _prev_ticks[lcpu].idle;
+    prev_total_ticks.wait += _prev_ticks[lcpu].wait;
+
+    update_prev_ticks(&lcpu_ticks, &_prev_ticks[lcpu]);
+  }
+
+  calculate_updated_load(&total_ticks, &prev_total_ticks, total_load);
 
   return OS_OK;
 }
@@ -318,28 +330,28 @@ int CPUPerformanceInterface::CPUPerformance::cpu_load_total_process(double* tota
  * - pjvmKernelLoad:   CPU load due to jvm process in kernel mode. Jvm process assumed to be self process
  * - psystemTotalLoad: Total CPU load from all process on all logical CPUs
  *
+ * Note: If any of the above loads cannot be calculated, this procedure returns OS_ERR and any load that could not be calculated is set to -1
+ *
  */
 int CPUPerformanceInterface::CPUPerformance::cpu_loads_process(double* pjvmUserLoad, double* pjvmKernelLoad, double* psystemTotalLoad) {
   double u, k, t;
 
-  assert(pjvmUserLoad     != NULL, "pjvmUserLoad not inited");
-  assert(pjvmKernelLoad   != NULL, "pjvmKernelLoad not inited");
-  assert(psystemTotalLoad != NULL, "psystemTotalLoad not inited");
-
-  if (get_jvm_load(&u, &k, NULL) == OS_ERR ||
-      cpu_load_total_process(&t) == OS_ERR)
-  {
-    *pjvmUserLoad     = 0.0;
-    *pjvmKernelLoad   = 0.0;
-    *psystemTotalLoad = 0.0;
-    return OS_ERR;
+  int retval = OS_OK;
+  if (get_jvm_load(&u, &k) == OS_ERR || cpu_load_total_process(&t) == OS_ERR) {
+    retval = OS_ERR;
   }
 
-  *pjvmUserLoad     = normalize(&u);
-  *pjvmKernelLoad   = normalize(&k);
-  *psystemTotalLoad = normalize(&t);
+  if (pjvmUserLoad) {
+    *pjvmUserLoad = u;
+  }
+  if (pjvmKernelLoad) {
+    *pjvmKernelLoad = k;
+  }
+  if (psystemTotalLoad) {
+    *psystemTotalLoad = t;
+  }
 
-  return OS_OK;
+  return retval;
 }
 
 int CPUPerformanceInterface::CPUPerformance::context_switch_rate(double* rate) {
@@ -406,44 +418,55 @@ char* SystemProcessInterface::SystemProcesses::allocate_string(const char* str) 
 }
 
 int SystemProcessInterface::SystemProcesses::system_processes(SystemProcess** system_processes, int* nprocs) const {
-  perfstat_process_t* all_proc_stats;
   perfstat_process_t* proc_stats;
-  perfstat_id_t       name_holder;
+  SystemProcess* head;
+  perfstat_id_t name_holder;
+  int records_requested;
 
   assert(system_processes != NULL, "system_processes pointer is NULL!");
   assert(nprocs != NULL, "system_processes counter pointers is NULL!");
 
-  // initialize pointers
+  head = NULL;
   *nprocs = 0;
-  *system_processes = NULL;
-
-  strcpy(name_holder.name, "");
+  strncpy(name_holder.name, "", IDENTIFIER_LENGTH);
 
   // calling perfstat_<subsystem>(NULL, NULL, _, 0) returns number of available records
-  if((*nprocs = perfstat_process(NULL, NULL, sizeof(perfstat_process_t), 0)) < 1) {
+  *nprocs = perfstat_process(NULL, NULL, sizeof(perfstat_process_t), 0);
+  if(*nprocs < 1) {
     // expect at least 1 process
     return OS_ERR;
   }
 
-  all_proc_stats = (perfstat_process_t*) NEW_RESOURCE_ARRAY(perfstat_process_t, *nprocs);
+  records_requested = *nprocs;
+  proc_stats = (perfstat_process_t*) NEW_RESOURCE_ARRAY(perfstat_process_t, records_requested);
 
-  // populate stats && (re)set the number of procs that have been populated
-  *nprocs = perfstat_process(&name_holder, all_proc_stats, sizeof(perfstat_process_t), *nprocs);
+  // populate stats && set the actual number of procs that have been populated
+  // should never be higher than requested, but may be lower due to process death
+  *nprocs = perfstat_process(&name_holder, proc_stats, sizeof(perfstat_process_t), records_requested);
 
-  for (int record=0; record < *nprocs; record++) {
-    proc_stats = &(all_proc_stats[record]);
+  for (int n = 0; n < *nprocs; n++) {
+    char* name     = NEW_C_HEAP_ARRAY(char, IDENTIFIER_LENGTH, mtInternal);
+    char* path     = NEW_C_HEAP_ARRAY(char, IDENTIFIER_LENGTH, mtInternal);
+    char* cmd_line = NEW_C_HEAP_ARRAY(char, IDENTIFIER_LENGTH, mtInternal);
 
-    // create new SystemProcess. With next pointing to current head.
-    SystemProcess* sp = new SystemProcess(proc_stats->pid,
-                                          allocate_string(proc_stats->proc_name),
-                                          NULL,
-                                          NULL,
-                                          *system_processes);
+    strncpy(name, proc_stats[n].proc_name, IDENTIFIER_LENGTH);
+    // TODO: Read /proc/<pid>/psinfo for additional data to populate the fields below
+    strncpy(path,     "", IDENTIFIER_LENGTH);
+    strncpy(cmd_line, "", IDENTIFIER_LENGTH);
+
+    // create a new SystemProcess with next pointing to current head.
+    SystemProcess* sp = new SystemProcess(proc_stats[n].pid,
+                                          name,
+                                          path,
+                                          cmd_line,
+                                          head);
     // update head.
-    *system_processes = sp;
+    head = sp;
   }
 
-  FREE_RESOURCE_ARRAY(perfstat_process_t, all_proc_stats, 1);
+  FREE_RESOURCE_ARRAY(perfstat_process_t, proc_stats, records_requested);
+
+  *system_processes = head;
   return OS_OK;
 }
 
@@ -525,51 +548,41 @@ bool NetworkPerformanceInterface::NetworkPerformance::initialize() { return true
 
 NetworkPerformanceInterface::NetworkPerformance::~NetworkPerformance() {}
 
-char* NetworkPerformanceInterface::NetworkPerformance::allocate_string(const char* str) const {
-  if (str != NULL) {
-    return os::strdup_check_oom(str, mtInternal);
-  }
-  return NULL;
-}
-
 int NetworkPerformanceInterface::NetworkPerformance::network_utilization(NetworkInterface** network_interfaces) const
 {
-  assert(network_interfaces != NULL, "network_interfaces is NULL");
-
   int n_records = 0;
-  NetworkInterface* head = *network_interfaces;
   perfstat_netinterface_t* net_stats;
-  perfstat_netinterface_t* all_net_stats;
   perfstat_id_t name_holder;
 
-  head = NULL;
+  assert(network_interfaces != NULL, "network_interfaces is NULL");
+
+  *network_interfaces = NULL;
   strncpy(name_holder.name , FIRST_NETINTERFACE, IDENTIFIER_LENGTH);
 
-  // calling perfstat_<subsyste>(NULL, NULL, ..., 0) returns number of available records
-  if (0 > (n_records = perfstat_netinterface(NULL, NULL, sizeof(perfstat_netinterface_t), 0))) {
+  // calling perfstat_<subsystem>(NULL, NULL, _, 0) returns number of available records
+  n_records = perfstat_netinterface(NULL, NULL, sizeof(perfstat_netinterface_t), 0);
+  if (n_records < 0) {
     return OS_ERR;
   }
 
-  all_net_stats = (perfstat_netinterface_t*) NEW_RESOURCE_ARRAY(perfstat_netinterface_t, n_records);
+  net_stats = NEW_RESOURCE_ARRAY(perfstat_netinterface_t, n_records);
 
   // populate net_stats && check that the expected number of records have been populated
-  if (n_records > (perfstat_netinterface(&name_holder, all_net_stats, sizeof(perfstat_netinterface_t), n_records))) {
-    FREE_RESOURCE_ARRAY(perfstat_netinterface_t, all_net_stats, 1);
+  if (n_records > (perfstat_netinterface(&name_holder, net_stats, sizeof(perfstat_netinterface_t), n_records))) {
+    FREE_RESOURCE_ARRAY(perfstat_netinterface_t, net_stats, n_records);
     return OS_ERR;
   }
 
-  for (int i = n_records - 1; i >= 0; i--) {
-    net_stats = &all_net_stats[i];
-
+  for (int i = 0; i < n_records; i++) {
     // Create new Network interface *with current head as next node*
-    NetworkInterface* net_interface = new NetworkInterface(allocate_string(net_stats->name),
-                                                           net_stats->ibytes,
-                                                           net_stats->obytes,
-                                                           head);
-    head = net_interface;
+    NetworkInterface* new_interface = new NetworkInterface(net_stats[i].name,
+                                                           net_stats[i].ibytes,
+                                                           net_stats[i].obytes,
+                                                           *network_interfaces);
+    *network_interfaces = new_interface;
   }
 
-  FREE_RESOURCE_ARRAY(perfstat_netinterface_t, all_net_stats, 1);
+  FREE_RESOURCE_ARRAY(perfstat_netinterface_t, net_stats, n_records);
   return OS_OK;
 }
 
