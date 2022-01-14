@@ -94,6 +94,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/ipc.h>
+#include <sys/ldr.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/select.h>
@@ -1131,8 +1132,26 @@ void os::get_summary_os_info(char* buf, size_t buflen) {
 }
 
 int os::get_loaded_modules_info(os::LoadedModulesCallbackFunc callback, void *param) {
-  // Not yet implemented.
-  return 0;
+  LoadedModuleList* head = nullptr;
+
+  if (!LoadedLibraries::copy_list(&head)) {
+    return -1;
+  }
+
+  for (const LoadedModuleList* entry = head; entry; entry = entry->next()) {
+    // TODO: Populate base and top addr
+    // const char* name -> address base -> address top -> void* param -> int
+    callback(entry->get_shortname(),
+             (address) entry->get_text_area_base(),
+             (address) entry->get_text_area_top(),
+             param);
+  }
+
+  // TODO: does callback keep reference to any of these items?
+  if (!head) {
+    delete head;
+  }
+  return 0; // What value indicates success (>= 0)?
 }
 
 void os::print_os_info_brief(outputStream* st) {
