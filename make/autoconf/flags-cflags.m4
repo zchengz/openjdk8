@@ -421,6 +421,13 @@ AC_DEFUN([FLAGS_SETUP_CFLAGS_HELPER],
     fi
   fi
 
+  if test "x$TOOLCHAIN_TYPE" = xxlc; then
+    # We need '-qminimaltoc' or '-qpic=large -bbigtoc' if the TOC overflows.
+    # Hotspot now overflows its 64K TOC (currently only for debug),
+    # so for debug we build with '-qpic=large -bbigtoc'.
+    DEBUG_CFLAGS_JVM="-qpic=large"
+  fi
+
   if test "x$DEBUG_LEVEL" != xrelease; then
     DEBUG_OPTIONS_FLAGS_JDK="$CFLAGS_DEBUG_OPTIONS"
     DEBUG_SYMBOLS_CFLAGS_JDK="$CFLAGS_DEBUG_SYMBOLS"
