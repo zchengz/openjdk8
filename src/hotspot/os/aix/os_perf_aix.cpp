@@ -207,7 +207,7 @@ bool populate_lcpu_names(int ncpus, perfstat_id_t* lcpu_names) {
 
   strncpy(name_holder.name, FIRST_CPU, IDENTIFIER_LENGTH);
 
-  all_lcpu_stats = NEW_RESOURCE_ARRAY(perfstat_cpu_t, records_allocated);
+  all_lcpu_stats = NEW_RESOURCE_ARRAY(perfstat_cpu_t, ncpus);
 
   // populate cpu_stats && check that the expected number of records have been populated
   if (ncpus != libperfstat::perfstat_cpu(&name_holder, all_lcpu_stats, sizeof(perfstat_cpu_t), ncpus)) {
