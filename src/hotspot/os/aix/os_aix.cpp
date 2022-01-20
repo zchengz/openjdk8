@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2022, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012, 2021 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -94,7 +94,6 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/ipc.h>
-#include <sys/ldr.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/select.h>
@@ -1139,7 +1138,6 @@ int os::get_loaded_modules_info(os::LoadedModulesCallbackFunc callback, void *pa
   }
 
   for (const LoadedModuleList* entry = head; entry; entry = entry->next()) {
-    // TODO: Populate base and top addr
     // const char* name -> address base -> address top -> void* param -> int
     callback(entry->get_shortname(),
              (address) entry->get_text_area_base(),
@@ -1147,7 +1145,6 @@ int os::get_loaded_modules_info(os::LoadedModulesCallbackFunc callback, void *pa
              param);
   }
 
-  // TODO: does callback keep reference to any of these items?
   if (!head) {
     delete head;
   }
