@@ -607,8 +607,6 @@ int NetworkPerformanceInterface::NetworkPerformance::network_utilization(Network
 
   assert(network_interfaces != NULL, "network_interfaces is NULL");
 
-  assert(network_interfaces != NULL, "network_interfaces is NULL");
-
   *network_interfaces = NULL;
   strncpy(name_holder.name , FIRST_NETINTERFACE, IDENTIFIER_LENGTH);
 
