@@ -895,7 +895,7 @@ public class ArrayList<E> extends AbstractList<E>
             if (c.contains(es[r]) != complement)
                 break;
         }
-		// w 记录要移除的元素个数
+		// w 记录要保留的元素个数
         int w = r++;
         try {
 			// 
