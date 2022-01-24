@@ -586,6 +586,7 @@ public class ArraysSupport {
      * as the object header size. The soft maximum value is chosen conservatively so
      * as to be smaller than any implementation limit that is likely to be encountered.
      */
+     // 有些 jvm 限制 超出将会OOM
     public static final int SOFT_MAX_ARRAY_LENGTH = Integer.MAX_VALUE - 8;
 
     /**
@@ -633,24 +634,34 @@ public class ArraysSupport {
         // preconditions not checked because of inlining
         // assert oldLength >= 0
         // assert minGrowth > 0
-
+		// oldLength 旧的长度
+		// minGrowth 最少要增加的长度
+		// prefGrowth 优先增加的长度 为旧元素的1/2
+		// 计算为旧容量 + 优先扩容容量与最小扩容容量的最大值  为以后预留空间
         int prefLength = oldLength + Math.max(minGrowth, prefGrowth); // might overflow
+        // prefLength > 0 说明数据没有溢出 超过了 int的最大值 并且 <= int 的最大值 - 8
+        
         if (0 < prefLength && prefLength <= SOFT_MAX_ARRAY_LENGTH) {
             return prefLength;
         } else {
+        	// 即如果预留扩容数据溢出
             // put code cold in a separate method
             return hugeLength(oldLength, minGrowth);
         }
     }
 
     private static int hugeLength(int oldLength, int minGrowth) {
+    	// 旧容量 + 最小扩容容量
         int minLength = oldLength + minGrowth;
+		// < 0 代表数据溢出 能承载所有元素的最小长度已经数据溢出
         if (minLength < 0) { // overflow
             throw new OutOfMemoryError(
                 "Required array length " + oldLength + " + " + minGrowth + " is too large");
+		// newLength 中已经判断预留扩容会数据溢出 就将ArrayList容量设置为ArrayList所允许的最大容量 (预留容量)
         } else if (minLength <= SOFT_MAX_ARRAY_LENGTH) {
             return SOFT_MAX_ARRAY_LENGTH;
         } else {
+			// 预留超出限制就返回最小容量
             return minLength;
         }
     }
